@@ -1,6 +1,7 @@
-name: Template Cleanup (Fork)
+name: Template Cleanup
 
-# This workflow automatically cleans up template-specific files when the repository is forked.
+# This workflow automatically cleans up template-specific files when the repository
+# is forked OR cloned and pushed to a different GitHub account.
 # It removes Claude code review files that are only needed for the original repository.
 
 on:
@@ -11,13 +12,18 @@ on:
 permissions:
   contents: write
 
+env:
+  ORIGINAL_REPO: 'eyaprak/vibe-coding-starter'
+
 jobs:
   cleanup:
-    name: Clean up fork
+    name: Clean up template files
     runs-on: ubuntu-latest
 
-    # Only run if this is a fork AND the cleanup target files still exist
-    if: github.event.repository.fork == true
+    # Run if: this is a fork OR this is not the original repository (covers clones)
+    if: |
+      github.event.repository.fork == true ||
+      github.repository != 'eyaprak/vibe-coding-starter'
 
     steps:
       - name: Checkout repository
