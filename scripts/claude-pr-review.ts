@@ -553,20 +553,20 @@ async function main(): Promise<void> {
     // Validate environment
     validateEnv();
 
-    // Check if PR is a draft (skip unless forced via /review or manual trigger)
-    if (PR_DRAFT && !FORCE_REVIEW) {
-      console.log("\n⏭️ Skipping review: PR is a draft (use /review to force)");
+    // Check if PR is a draft (always skip drafts)
+    if (PR_DRAFT) {
+      console.log("\n⏭️ Skipping review: PR is a draft");
       return;
     }
 
-    // Check for skip label (skip unless forced)
+    // Check for skip label (can be bypassed with /review)
     if (PR_LABELS.includes(SKIP_LABEL) && !FORCE_REVIEW) {
       console.log(`\n⏭️ Skipping review: PR has "${SKIP_LABEL}" label (use /review to force)`);
       return;
     }
 
     if (FORCE_REVIEW) {
-      console.log("🔄 Review triggered manually or via /review command");
+      console.log("🔄 Review triggered via /review command or manual trigger");
     }
 
     // Fetch PR data
