@@ -278,10 +278,11 @@ function getSeverityEmoji(severity: InlineComment["severity"]): string {
   }
 }
 
-// Label configuration - only 2 states: approved or changes requested
+// Label configuration
 const LABELS = {
   approved: { name: "claude:approved", color: "0e8a16", description: "Approved by Claude AI" },
   changesRequested: { name: "claude:changes-requested", color: "d93f0b", description: "Claude AI requested changes" },
+  reviewing: { name: "reviewing:claude-ai", color: "fbca04", description: "Being reviewed by Claude AI" },
 };
 
 // Ensure label exists, create if not
@@ -305,11 +306,27 @@ async function ensureLabel(label: { name: string; color: string; description: st
   }
 }
 
+// Add "reviewing" label when review starts
+async function addReviewingLabel(): Promise<void> {
+  try {
+    await ensureLabel(LABELS.reviewing);
+    await octokit.issues.addLabels({
+      owner: REPO_OWNER!,
+      repo: REPO_NAME!,
+      issue_number: PR_NUMBER,
+      labels: [LABELS.reviewing.name],
+    });
+    console.log(`Added label: ${LABELS.reviewing.name}`);
+  } catch (error) {
+    console.warn("Could not add reviewing label:", error);
+  }
+}
+
 // Update PR labels based on review result
 async function updateLabels(event: "APPROVE" | "REQUEST_CHANGES"): Promise<void> {
-  // Include legacy label for cleanup
+  // Include legacy and reviewing labels for cleanup
   const legacyLabel = { name: "claude:reviewed", color: "1d76db", description: "" };
-  const allLabels = [LABELS.approved, LABELS.changesRequested, legacyLabel];
+  const allLabels = [LABELS.approved, LABELS.changesRequested, LABELS.reviewing, legacyLabel];
 
   // Determine which label to add
   const labelToAdd = event === "APPROVE" ? LABELS.approved : LABELS.changesRequested;
@@ -562,6 +579,9 @@ async function main(): Promise<void> {
       console.log(`  ... and ${prData.files.length - 10} more`);
     }
 
+    // Add "reviewing" label to show review is in progress
+    await addReviewingLabel();
+
     // Build prompt and call Claude
     console.log("\nSending to Claude for review...");
     const prompt = buildPrompt(prData);
@@ -596,9 +616,15 @@ async function main(): Promise<void> {
     await postReview(review, prData.files);
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`\n✅ Review completed in ${duration}s`);
+    const criticalCount = review.comments.filter((c) => c.severity === "critical").length;
 
-    console.log("\nReview completed successfully!");
+    if (criticalCount > 0) {
+      console.log(`\n❌ Review completed in ${duration}s - ${criticalCount} critical issue(s) found`);
+      console.log("Failing check to block merge until issues are resolved.");
+      process.exit(1);
+    }
+
+    console.log(`\n✅ Review completed in ${duration}s - approved`);
   } catch (error) {
     console.error("\nError during review:", error);
 
