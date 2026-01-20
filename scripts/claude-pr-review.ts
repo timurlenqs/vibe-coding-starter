@@ -278,11 +278,10 @@ function getSeverityEmoji(severity: InlineComment["severity"]): string {
   }
 }
 
-// Label configuration
+// Label configuration - only 2 states: approved or changes requested
 const LABELS = {
   approved: { name: "claude:approved", color: "0e8a16", description: "Approved by Claude AI" },
   changesRequested: { name: "claude:changes-requested", color: "d93f0b", description: "Claude AI requested changes" },
-  reviewed: { name: "claude:reviewed", color: "1d76db", description: "Reviewed by Claude AI with notes" },
 };
 
 // Ensure label exists, create if not
@@ -307,22 +306,11 @@ async function ensureLabel(label: { name: string; color: string; description: st
 }
 
 // Update PR labels based on review result
-async function updateLabels(event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"): Promise<void> {
-  const allLabels = [LABELS.approved, LABELS.changesRequested, LABELS.reviewed];
+async function updateLabels(event: "APPROVE" | "REQUEST_CHANGES"): Promise<void> {
+  const allLabels = [LABELS.approved, LABELS.changesRequested];
 
   // Determine which label to add
-  let labelToAdd: typeof LABELS.approved;
-  switch (event) {
-    case "APPROVE":
-      labelToAdd = LABELS.approved;
-      break;
-    case "REQUEST_CHANGES":
-      labelToAdd = LABELS.changesRequested;
-      break;
-    case "COMMENT":
-      labelToAdd = LABELS.reviewed;
-      break;
-  }
+  const labelToAdd = event === "APPROVE" ? LABELS.approved : LABELS.changesRequested;
 
   // Ensure the label exists
   await ensureLabel(labelToAdd);
@@ -388,9 +376,9 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
   if (criticalCount > 0) {
     body += `❌ **Changes requested** - Please fix the critical issues before merging.\n`;
   } else if (warningCount > 0) {
-    body += `✅ **Approved with notes** - Consider addressing the warnings, but OK to merge.\n`;
+    body += `✅ **Approved** - Minor suggestions below, but good to merge.\n`;
   } else {
-    body += `✅ **Looks good!** - No issues found.\n`;
+    body += `✅ **Approved** - No issues found.\n`;
   }
 
   body += `\n---\n*Powered by Claude AI*`;
@@ -457,21 +445,18 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
     }
   }
 
-  // Determine review event - only block on critical issues
-  let event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+  // Determine review event - only 2 states
+  let event: "APPROVE" | "REQUEST_CHANGES";
   if (criticalCount > 0) {
     // Only block merge for critical issues
     event = "REQUEST_CHANGES";
-  } else if (warningCount > 0) {
-    // Warnings are just comments, don't block
-    event = "COMMENT";
   } else {
-    // No issues or just suggestions - approve
+    // No critical issues - approve (warnings are just suggestions)
     event = "APPROVE";
   }
 
   // Dismiss previous "changes requested" reviews from this bot if we're now approving
-  if (event === "APPROVE" || event === "COMMENT") {
+  if (event === "APPROVE") {
     try {
       const { data: reviews } = await octokit.pulls.listReviews({
         owner: REPO_OWNER!,
