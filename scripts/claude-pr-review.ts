@@ -520,9 +520,6 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
     console.log(`Review submitted successfully (${event})`);
     console.log(`- Summary posted`);
     console.log(`- ${reviewComments.length} inline comments posted`);
-
-    // Update PR labels
-    await updateLabels(event);
   } catch (error) {
     console.error("Failed to create review:", error);
 
@@ -536,6 +533,9 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
 
     console.log("Fallback: Posted as issue comment");
   }
+
+  // Always update labels (remove reviewing, add result label)
+  await updateLabels(event);
 }
 
 // Main function
