@@ -98,4 +98,5 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           PR_DRAFT: ${{ steps.pr_details.outputs.draft }}
           PR_LABELS: ${{ steps.pr_details.outputs.labels }}
+          FORCE_REVIEW: ${{ github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch' }}
         run: npx tsx scripts/claude-pr-review.ts

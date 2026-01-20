@@ -49,6 +49,7 @@ const REPO_OWNER = process.env.REPO_OWNER;
 const REPO_NAME = process.env.REPO_NAME;
 const PR_DRAFT = process.env.PR_DRAFT === "true";
 const PR_LABELS = (process.env.PR_LABELS || "").split(",").filter(Boolean);
+const FORCE_REVIEW = process.env.FORCE_REVIEW === "true";
 
 // Skip review label
 const SKIP_LABEL = "skip-claude-review";
@@ -552,16 +553,20 @@ async function main(): Promise<void> {
     // Validate environment
     validateEnv();
 
-    // Check if PR is a draft
-    if (PR_DRAFT) {
-      console.log("\n⏭️ Skipping review: PR is a draft");
+    // Check if PR is a draft (skip unless forced via /review or manual trigger)
+    if (PR_DRAFT && !FORCE_REVIEW) {
+      console.log("\n⏭️ Skipping review: PR is a draft (use /review to force)");
       return;
     }
 
-    // Check for skip label
-    if (PR_LABELS.includes(SKIP_LABEL)) {
-      console.log(`\n⏭️ Skipping review: PR has "${SKIP_LABEL}" label`);
+    // Check for skip label (skip unless forced)
+    if (PR_LABELS.includes(SKIP_LABEL) && !FORCE_REVIEW) {
+      console.log(`\n⏭️ Skipping review: PR has "${SKIP_LABEL}" label (use /review to force)`);
       return;
+    }
+
+    if (FORCE_REVIEW) {
+      console.log("🔄 Review triggered manually or via /review command");
     }
 
     // Fetch PR data
