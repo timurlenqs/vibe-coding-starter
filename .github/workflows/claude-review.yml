@@ -2,11 +2,12 @@ name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review]
 
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -39,4 +40,6 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/claude-pr-review.ts

@@ -47,6 +47,11 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const PR_NUMBER = parseInt(process.env.PR_NUMBER || "0", 10);
 const REPO_OWNER = process.env.REPO_OWNER;
 const REPO_NAME = process.env.REPO_NAME;
+const PR_DRAFT = process.env.PR_DRAFT === "true";
+const PR_LABELS = (process.env.PR_LABELS || "").split(",").filter(Boolean);
+
+// Skip review label
+const SKIP_LABEL = "skip-claude-review";
 
 // Validate environment
 function validateEnv(): void {
@@ -273,6 +278,87 @@ function getSeverityEmoji(severity: InlineComment["severity"]): string {
   }
 }
 
+// Label configuration
+const LABELS = {
+  approved: { name: "claude:approved", color: "0e8a16", description: "Approved by Claude AI" },
+  changesRequested: { name: "claude:changes-requested", color: "d93f0b", description: "Claude AI requested changes" },
+  reviewed: { name: "claude:reviewed", color: "1d76db", description: "Reviewed by Claude AI with notes" },
+};
+
+// Ensure label exists, create if not
+async function ensureLabel(label: { name: string; color: string; description: string }): Promise<void> {
+  try {
+    await octokit.issues.getLabel({
+      owner: REPO_OWNER!,
+      repo: REPO_NAME!,
+      name: label.name,
+    });
+  } catch {
+    // Label doesn't exist, create it
+    await octokit.issues.createLabel({
+      owner: REPO_OWNER!,
+      repo: REPO_NAME!,
+      name: label.name,
+      color: label.color,
+      description: label.description,
+    });
+    console.log(`Created label: ${label.name}`);
+  }
+}
+
+// Update PR labels based on review result
+async function updateLabels(event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"): Promise<void> {
+  const allLabels = [LABELS.approved, LABELS.changesRequested, LABELS.reviewed];
+
+  // Determine which label to add
+  let labelToAdd: typeof LABELS.approved;
+  switch (event) {
+    case "APPROVE":
+      labelToAdd = LABELS.approved;
+      break;
+    case "REQUEST_CHANGES":
+      labelToAdd = LABELS.changesRequested;
+      break;
+    case "COMMENT":
+      labelToAdd = LABELS.reviewed;
+      break;
+  }
+
+  // Ensure the label exists
+  await ensureLabel(labelToAdd);
+
+  // Get current PR labels
+  const { data: currentLabels } = await octokit.issues.listLabelsOnIssue({
+    owner: REPO_OWNER!,
+    repo: REPO_NAME!,
+    issue_number: PR_NUMBER,
+  });
+
+  // Remove old Claude labels
+  for (const label of allLabels) {
+    if (currentLabels.some((l) => l.name === label.name) && label.name !== labelToAdd.name) {
+      await octokit.issues.removeLabel({
+        owner: REPO_OWNER!,
+        repo: REPO_NAME!,
+        issue_number: PR_NUMBER,
+        name: label.name,
+      });
+      console.log(`Removed label: ${label.name}`);
+    }
+  }
+
+  // Add new label if not already present
+  if (!currentLabels.some((l) => l.name === labelToAdd.name)) {
+    await octokit.issues.addLabels({
+      owner: REPO_OWNER!,
+      repo: REPO_NAME!,
+      issue_number: PR_NUMBER,
+      labels: [labelToAdd.name],
+    });
+    console.log(`Added label: ${labelToAdd.name}`);
+  }
+}
+
 // Post review to GitHub
 async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void> {
   // Build the review body
@@ -282,6 +368,15 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
 
   let body = `## 🤖 Claude Code Review\n\n`;
   body += `${review.summary}\n\n`;
+
+  // Add files reviewed summary
+  const totalChanges = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
+  body += `<details>\n<summary>📁 Files reviewed (${files.length} files, ${totalChanges} changes)</summary>\n\n`;
+  files.forEach((f) => {
+    const icon = f.status === "added" ? "🆕" : f.status === "removed" ? "🗑️" : "📝";
+    body += `- ${icon} \`${f.filename}\` (+${f.additions}/-${f.deletions})\n`;
+  });
+  body += `\n</details>\n\n`;
 
   if (criticalCount > 0 || warningCount > 0) {
     body += `### Issues Found\n`;
@@ -389,6 +484,9 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
     console.log(`Review submitted successfully (${event})`);
     console.log(`- Summary posted`);
     console.log(`- ${reviewComments.length} inline comments posted`);
+
+    // Update PR labels
+    await updateLabels(event);
   } catch (error) {
     console.error("Failed to create review:", error);
 
@@ -406,6 +504,7 @@ async function postReview(review: ReviewResponse, files: PRFile[]): Promise<void
 
 // Main function
 async function main(): Promise<void> {
+  const startTime = Date.now();
   console.log("Starting Claude PR Review...");
   console.log(`Repository: ${REPO_OWNER}/${REPO_NAME}`);
   console.log(`PR Number: ${PR_NUMBER}`);
@@ -413,6 +512,18 @@ async function main(): Promise<void> {
   try {
     // Validate environment
     validateEnv();
+
+    // Check if PR is a draft
+    if (PR_DRAFT) {
+      console.log("\n⏭️ Skipping review: PR is a draft");
+      return;
+    }
+
+    // Check for skip label
+    if (PR_LABELS.includes(SKIP_LABEL)) {
+      console.log(`\n⏭️ Skipping review: PR has "${SKIP_LABEL}" label`);
+      return;
+    }
 
     // Fetch PR data
     console.log("\nFetching PR data...");
@@ -423,6 +534,13 @@ async function main(): Promise<void> {
     if (prData.files.length === 0) {
       console.log("No files to review (all files skipped)");
       return;
+    }
+
+    // Log files being reviewed
+    console.log("\nFiles:");
+    prData.files.slice(0, 10).forEach((f) => console.log(`  - ${f.filename}`));
+    if (prData.files.length > 10) {
+      console.log(`  ... and ${prData.files.length - 10} more`);
     }
 
     // Build prompt and call Claude
@@ -457,6 +575,9 @@ async function main(): Promise<void> {
     // Post review to GitHub
     console.log("\nPosting review to GitHub...");
     await postReview(review, prData.files);
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n✅ Review completed in ${duration}s`);
 
     console.log("\nReview completed successfully!");
   } catch (error) {
