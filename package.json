@@ -69,8 +69,6 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
-    "@octokit/rest": "^21.0.0",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
